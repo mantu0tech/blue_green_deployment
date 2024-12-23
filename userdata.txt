@@ -1,0 +1,73 @@
+#!/bin/bash -xe
+
+
+# Update and install httpd
+sudo yum update -y
+sudo yum install httpd -y
+echo 'Hello' | sudo tee /var/www/html/index.html
+sudo systemctl restart httpd
+
+
+## Code Deploy Agent Bootstrap Script ##
+
+
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+AUTOUPDATE=false
+
+
+function installdep() {
+  if [ "${PLAT}" = "ubuntu" ]; then
+    sudo apt-get -y update
+    sudo apt-get -y install jq awscli ruby2.0 || sudo apt-get -y install jq awscli ruby
+
+
+  elif [ "${PLAT}" = "amz" ]; then
+    sudo yum -y update
+    sudo yum install -y jq aws-cli ruby
+  fi
+}
+
+
+function platformize() {
+  # Linux OS detection #
+  if hash lsb_release 2>/dev/null; then
+    echo "Ubuntu server OS detected"
+    export PLAT="ubuntu"
+  elif hash yum 2>/dev/null; then
+    echo "Amazon Linux detected"
+    export PLAT="amz"
+  else
+    echo "Unsupported release"
+    exit 1
+  fi
+}
+
+
+function install_codedeploy_agent() {
+  REGION="us-east-1"
+ 
+  cd /tmp/
+  wget https://aws-codedeploy-${REGION}.s3.amazonaws.com/latest/install
+  chmod +x ./install
+
+
+  if sudo ./install auto; then
+    echo "CodeDeploy Agent installation completed"
+    if ! ${AUTOUPDATE}; then
+      echo "Disabling Auto Update"
+      sudo sed -i '/@reboot/d' /etc/cron.d/codedeploy-agent-update
+      sudo chattr +i /etc/cron.d/codedeploy-agent-update
+      rm -f /tmp/install
+    fi
+    sudo service codedeploy-agent start
+  else
+    echo "CodeDeploy Agent installation script failed, please investigate"
+    rm -f /tmp/install
+    exit 1
+  fi
+}
+
+
+platformize
+installdep
+install_codedeploy_agent
